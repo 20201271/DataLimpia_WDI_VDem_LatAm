@@ -1,0 +1,228 @@
+---
+title: "Democracia y desarrollo sostenible en América Latina"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+    theme: cosmo
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(shiny)
+library(tidyverse)
+library(rio)
+
+# Cargar datos limpios (CSV en la misma carpeta)
+datos  <- import("data_limpia_latam_democracia.csv")
+
+# Vector de países y rango de años para los filtros
+paises <- sort(unique(datos$`Country Name`))
+anios  <- range(datos$year, na.rm = TRUE)
+```
+
+# Democracia y recursos naturales
+
+## Column {.sidebar}
+
+```{r}
+# Controles en la barra lateral
+selectInput("pais",
+            "País:",
+            choices = c("Todos", paises),
+            selected = "Todos")
+
+sliderInput("anio",
+            "Año:",
+            min   = anios[1],
+            max   = anios[2],
+            value = c(anios[1], anios[2]),
+            sep   = "")
+```
+
+```{r}
+# Datos filtrados según los controles
+datos_filtrados <- reactive({
+  df <- datos %>%
+    filter(year >= input$anio[1],
+           year <= input$anio[2])
+  
+  if (input$pais != "Todos") {
+    df <- df %>% filter(`Country Name` == input$pais)
+  }
+  df
+})
+```
+
+## Indicadores clave
+
+### Nivel de democracia (v2x_libdem)
+
+```{r}
+library(scales)
+
+renderValueBox({
+  df <- datos_filtrados()
+  valor <- mean(df$v2x_libdem, na.rm = TRUE)
+  
+  valueBox(
+    value   = percent(valor, accuracy = 0.1),
+    caption = "Democracia liberal promedio",
+    icon    = "fa-balance-scale",
+    color   = ifelse(valor >= 0.6, "success",
+                     ifelse(valor >= 0.4, "warning", "danger"))
+  )
+})
+```
+
+### Desigualdad y recursos
+
+```{r}
+renderValueBox({
+  df <- datos_filtrados()
+  valor <- mean(df$SI.POV.GINI, na.rm = TRUE)
+  
+  valueBox(
+    value   = round(valor, 1),
+    caption = "Gini promedio",
+    icon    = "fa-line-chart",
+    color   = "info"
+  )
+})
+```
+
+```{r}
+renderValueBox({
+  df <- datos_filtrados()
+  valor <- mean(df$NY.GDP.TOTL.RT.ZS, na.rm = TRUE)
+  
+  valueBox(
+    value   = paste0(round(valor, 1), " %"),
+    caption = "Rentas totales de recursos (% PIB)",
+    icon    = "fa-industry",
+    color   = "primary"
+  )
+})
+```
+
+# Relación democracia – desarrollo
+
+## Column
+
+### Democracia y rentas de recursos
+
+```{r}
+renderPlot({
+  df <- datos_filtrados()
+  
+  ggplot(df, aes(x = NY.GDP.TOTL.RT.ZS, y = v2x_libdem,
+                 color = `Country Name`)) +
+    geom_point(alpha = 0.6) +
+    geom_smooth(method = "lm", se = FALSE, color = "black") +
+    scale_y_continuous("Democracia liberal (v2x_libdem)", limits = c(0, 1)) +
+    scale_x_continuous("Rentas totales de recursos naturales (% del PIB)") +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+})
+```
+
+### Democracia y desigualdad (Gini)
+
+```{r}
+renderPlot({
+  df <- datos_filtrados()
+  
+  ggplot(df, aes(x = SI.POV.GINI, y = v2x_libdem,
+                 color = `Country Name`)) +
+    geom_point(alpha = 0.6) +
+    geom_smooth(method = "lm", se = FALSE, color = "black") +
+    scale_y_continuous("Democracia liberal (v2x_libdem)", limits = c(0, 1)) +
+    xlab("Índice de Gini") +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+})
+```
+
+## Column
+
+### Serie de tiempo: democracia por país
+
+```{r}
+renderPlot({
+  df <- datos_filtrados()
+  
+  ggplot(df, aes(x = year, y = v2x_libdem,
+                 color = `Country Name`)) +
+    geom_line(linewidth = 1) +
+    scale_y_continuous("Democracia liberal (v2x_libdem)", limits = c(0, 1)) +
+    xlab("Año") +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+})
+```
+
+### Áreas protegidas y democracia
+
+```{r}
+renderPlot({
+  df <- datos_filtrados()
+  
+  ggplot(df, aes(x = ER.PTD.TOTL.ZS, y = v2x_libdem,
+                 color = `Country Name`)) +
+    geom_point(alpha = 0.6) +
+    geom_smooth(method = "lm", se = FALSE, color = "black") +
+    xlab("Áreas protegidas (% de la superficie)") +
+    ylab("Democracia liberal (v2x_libdem)") +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+})
+```
+
+# Tabla y regresiones
+
+## Column {.tabset}
+
+### Tabla de datos filtrados
+
+```{r}
+renderDataTable({
+  datos_filtrados() %>%
+    select(`Country Name`, year,
+           v2x_libdem, v2x_egaldem, v2x_api,
+           SI.POV.GINI, SI.POV.NAHC,
+           NY.GDP.TOTL.RT.ZS, EN.GHG.CO2.PC.CE.AR5,
+           ER.PTD.TOTL.ZS, SP.POP.TOTL)
+})
+```
+
+### Modelo: democracia \~ recursos + desigualdad
+
+```{r}
+renderPrint({
+  df <- datos_filtrados()
+  
+  mod <- lm(
+    v2x_libdem ~ NY.GDP.TOTL.RT.ZS + SI.POV.GINI + EN.GHG.CO2.PC.CE.AR5,
+    data = df,
+    na.action = na.omit
+  )
+  
+  summary(mod)
+})
+```
+
+### Modelo: democracia \~ áreas protegidas
+
+```{r}
+renderPrint({
+  df <- datos_filtrados()
+  
+  mod <- lm(
+    v2x_libdem ~ ER.PTD.TOTL.ZS + NY.GDP.TOTL.RT.ZS + SP.POP.TOTL,
+    data = df,
+    na.action = na.omit
+  )
+  
+  summary(mod)
+})
+```
